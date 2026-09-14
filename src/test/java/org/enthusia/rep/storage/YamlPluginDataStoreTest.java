@@ -20,10 +20,15 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class YamlPluginDataStoreTest {
     private static final String INVALID_VALUE = "invalid";
+    private static final String PROTECTED_HASH = "h1:00112233445566778899aabbccddeeff";
+    private static final String DATA_FILE_NAME = "data.yml";
+    private static final String IDENTITIES_PREFIX = "identities.";
+    private static final String IP_HASHES_SUFFIX = ".ipHashes";
 
     @TempDir
     Path temporaryDirectory;
@@ -35,7 +40,7 @@ class YamlPluginDataStoreTest {
         UUID staffId = UUID.randomUUID();
         Commendation commendation = new Commendation(
                 giverId, targetId, true, RepCategory.WAS_KIND, "Helped with a build",
-                100L, 110L, "ip-hash", 1
+                100L, 110L, PROTECTED_HASH, 1
         );
         ReputationChangeRecord change = new ReputationChangeRecord(
                 "change-1", 120L, targetId, giverId, "Giver", 1,
@@ -50,9 +55,10 @@ class YamlPluginDataStoreTest {
                 List.of(new PluginDataSnapshot.StalkEntry(giverId, targetId, 140L)),
                 List.of(change),
                 List.of(new RepService.SuspiciousRepCase(
-                        targetId, "ALT_IP", "case-key", List.of(giverId), 150L, false, "Shared address")),
+                        targetId, "ALT_IP", PROTECTED_HASH, List.of(giverId), 150L, false, "Shared address")),
                 List.of(new PluginDataSnapshot.RemovalCooldownEntry(giverId, targetId, 160L)),
-                Map.of(targetId, false)
+                Map.of(targetId, false),
+                Map.of(giverId, new org.enthusia.rep.rep.RepIdentityState(java.util.Set.of(PROTECTED_HASH), java.util.Set.of(targetId), 170L, Map.of(targetId.toString(), 170L)))
         );
         YamlPluginDataStore store = new YamlPluginDataStore(
                 temporaryDirectory.toFile(), testLogger());
@@ -66,11 +72,64 @@ class YamlPluginDataStoreTest {
         assertCommendation(commendation, loaded.removedEntries().getFirst().commendation());
         assertEquals(snapshot.stalkEntries(), loaded.stalkEntries());
         assertEquals(List.of(change), loaded.reputationChanges());
-        assertEquals("case-key", loaded.suspiciousCases().getFirst().key());
+        assertEquals(PROTECTED_HASH, loaded.suspiciousCases().getFirst().key());
         assertEquals("Shared address", loaded.suspiciousCases().getFirst().detail());
         assertEquals(snapshot.removalCooldowns(), loaded.removalCooldowns());
+        assertEquals(snapshot.identities(), loaded.identities());
         assertFalse(loaded.repTradingAlertPreferences().get(targetId));
         assertFalse(Files.exists(temporaryDirectory.resolve("data.yml.tmp")));
+    }
+
+    @Test
+    void migratesLegacyAddressIdentifiersOutOfPersistedData() throws Exception {
+        UUID giverId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("dataVersion", 8);
+        config.set("players." + targetId + ".score", 1);
+        config.set(IDENTITIES_PREFIX + giverId + IP_HASHES_SUFFIX, List.of("legacy-unsalted-hash"));
+        config.set(IDENTITIES_PREFIX + giverId + ".givenTargets", List.of(targetId.toString()));
+        config.set("commendations.0.giver", giverId.toString());
+        config.set("commendations.0.target", targetId.toString());
+        config.set("commendations.0.positive", true);
+        config.set("commendations.0.category", RepCategory.WAS_KIND.name());
+        config.set("commendations.0.reason", "legacy");
+        config.set("commendations.0.createdAt", 10L);
+        config.set("commendations.0.lastEditedAt", 20L);
+        config.set("commendations.0.scoreValue", 1);
+        config.set("commendations.0.ipHash", "legacy-unsalted-hash");
+        config.save(temporaryDirectory.resolve(DATA_FILE_NAME).toFile());
+
+        YamlPluginDataStore store = new YamlPluginDataStore(temporaryDirectory.toFile(), testLogger());
+        PluginDataSnapshot loaded = store.load();
+
+        assertTrue(loaded.identities().get(giverId).ipHashes().isEmpty());
+        assertNull(loaded.commendations().getFirst().getIpHash());
+
+        YamlConfiguration migrated = YamlConfiguration.loadConfiguration(temporaryDirectory.resolve(DATA_FILE_NAME).toFile());
+        assertEquals(9, migrated.getInt("dataVersion"));
+        assertTrue(migrated.getStringList(IDENTITIES_PREFIX + giverId + IP_HASHES_SUFFIX).isEmpty());
+        assertFalse(migrated.isSet("commendations.0.ipHash"));
+    }
+
+    @Test
+    void duplicateCanonicalIdentityKeysDoNotAbortLoad() throws Exception {
+        UUID playerId = UUID.fromString("abcdefab-cdef-abcd-efab-cdefabcdefab");
+        String lower = playerId.toString();
+        String upper = lower.toUpperCase(java.util.Locale.ROOT);
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("dataVersion", 9);
+        config.set(IDENTITIES_PREFIX + lower + IP_HASHES_SUFFIX, List.of(PROTECTED_HASH));
+        config.set(IDENTITIES_PREFIX + lower + ".givenTargets", List.of());
+        config.set(IDENTITIES_PREFIX + upper + IP_HASHES_SUFFIX, List.of(PROTECTED_HASH));
+        config.set(IDENTITIES_PREFIX + upper + ".givenTargets", List.of());
+        config.save(temporaryDirectory.resolve(DATA_FILE_NAME).toFile());
+
+        YamlPluginDataStore store = new YamlPluginDataStore(temporaryDirectory.toFile(), testLogger());
+        PluginDataSnapshot loaded = store.load();
+
+        assertEquals(1, loaded.identities().size());
+        assertTrue(loaded.identities().containsKey(playerId));
     }
 
     @Test
@@ -92,7 +151,7 @@ class YamlPluginDataStoreTest {
         config.set("removalCooldowns", List.of(Map.of("giver", INVALID_VALUE)));
         config.set("playerSettings.not-a-uuid.repTradingAlertsEnabled", true);
         config.set("stalks.0.stalker", "not-a-uuid");
-        config.save(temporaryDirectory.resolve("data.yml").toFile());
+        config.save(temporaryDirectory.resolve(DATA_FILE_NAME).toFile());
         YamlPluginDataStore store = new YamlPluginDataStore(
                 temporaryDirectory.toFile(), testLogger());
 

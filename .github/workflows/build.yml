@@ -19,9 +19,9 @@ jobs:
       - name: Verify retry handling
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Verify
-        run: python3 .github/scripts/maven_retry.py mvn -U --batch-mode --no-transfer-progress -Dstyle.color=never clean verify
+        run: python3 .github/scripts/maven_retry.py verify
       - name: PMD
-        run: python3 .github/scripts/maven_retry.py mvn -U --batch-mode --no-transfer-progress -Dstyle.color=never org.apache.maven.plugins:maven-pmd-plugin:3.26.0:pmd
+        run: python3 .github/scripts/maven_retry.py pmd
       - name: Upload plugin jar
         uses: actions/upload-artifact@v4
         with:

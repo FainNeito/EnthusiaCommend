@@ -235,6 +235,32 @@ class RepServicePolicyTest {
     }
 
     @Test
+    void advancementEvidenceTracksLiveHighWaterMarksAndSurvivesRestart() {
+        yaml.set("rep.ipProtection.enabled", false);
+        RepService service = service(initial(TARGET_ADDRESS));
+
+        for (int index = 0; index < 5; index++) {
+            UUID author = UUID.randomUUID();
+            assertTrue(vote(service, author, true, RepCategory.WAS_KIND, "giver-" + index).success());
+        }
+
+        RepAdvancementEvidence earned = service.getAdvancementEvidence(target);
+        assertTrue(earned.positiveReceived());
+        assertEquals(5, earned.maxOverall());
+        assertEquals(5, earned.maxPositiveCategoryScore(RepCategory.WAS_KIND));
+
+        service.setScore(target, -25);
+        service.setScore(target, 0);
+        earned = service.getAdvancementEvidence(target);
+        assertEquals(5, earned.maxOverall());
+        assertEquals(-25, earned.minOverall());
+        assertTrue(earned.recoveredFromSevere());
+
+        RepService restored = service(service.snapshot(PluginDataSnapshot.EMPTY));
+        assertEquals(earned, restored.getAdvancementEvidence(target));
+    }
+
+    @Test
     void polarityLeaderboardsSumAllCategoriesWithoutNettingTheOtherSide() {
         RepService service = service(initial(TARGET_ADDRESS));
         vote(service, giver, true, RepCategory.WAS_KIND, "one");

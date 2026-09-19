@@ -287,7 +287,8 @@ public final class CommendPlugin extends JavaPlugin {
                 repSnapshot.suspiciousCases(),
                 repSnapshot.removalCooldowns(),
                 repSnapshot.repTradingAlertPreferences(),
-                repSnapshot.identities()
+                repSnapshot.identities(),
+                repSnapshot.advancementEvidence()
         );
     }
 

@@ -6,6 +6,7 @@ import org.enthusia.rep.analytics.ReputationChangeOutcome;
 import org.enthusia.rep.analytics.ReputationChangeRecord;
 import org.enthusia.rep.analytics.ReputationChangeSource;
 import org.enthusia.rep.rep.Commendation;
+import org.enthusia.rep.rep.RepAdvancementEvidence;
 import org.enthusia.rep.rep.RepCategory;
 import org.enthusia.rep.rep.RepService;
 import org.junit.jupiter.api.Test;
@@ -53,7 +54,12 @@ class YamlPluginDataStoreTest {
                         targetId, "ALT_IP", "case-key", List.of(giverId), 150L, false, "Shared address")),
                 List.of(new PluginDataSnapshot.RemovalCooldownEntry(giverId, targetId, 160L)),
                 Map.of(targetId, false),
-                Map.of(giverId, new org.enthusia.rep.rep.RepIdentityState(java.util.Set.of("saved-hash"), java.util.Set.of(targetId), 170L, Map.of(targetId.toString(), 170L)))
+                Map.of(giverId, new org.enthusia.rep.rep.RepIdentityState(
+                        java.util.Set.of("saved-hash"), java.util.Set.of(targetId), 170L,
+                        Map.of(targetId.toString(), 170L))),
+                Map.of(targetId, new RepAdvancementEvidence(
+                        true, 20, -12, true,
+                        Map.of(RepCategory.WAS_KIND, 5, RepCategory.TRUSTWORTHY, 6)))
         );
         YamlPluginDataStore store = new YamlPluginDataStore(
                 temporaryDirectory.toFile(), testLogger());
@@ -71,6 +77,7 @@ class YamlPluginDataStoreTest {
         assertEquals("Shared address", loaded.suspiciousCases().getFirst().detail());
         assertEquals(snapshot.removalCooldowns(), loaded.removalCooldowns());
         assertEquals(snapshot.identities(), loaded.identities());
+        assertEquals(snapshot.advancementEvidence(), loaded.advancementEvidence());
         assertFalse(loaded.repTradingAlertPreferences().get(targetId));
         assertFalse(Files.exists(temporaryDirectory.resolve("data.yml.tmp")));
     }

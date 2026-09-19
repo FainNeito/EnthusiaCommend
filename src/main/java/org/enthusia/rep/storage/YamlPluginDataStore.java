@@ -5,6 +5,8 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.enthusia.rep.CommendPlugin;
 import org.enthusia.rep.analytics.ReputationChangeRecord;
 import org.enthusia.rep.rep.Commendation;
+import org.enthusia.rep.rep.RepAdvancementEvidence;
+import org.enthusia.rep.rep.RepCategory;
 import org.enthusia.rep.rep.RepService;
 
 import java.io.File;
@@ -25,7 +27,7 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 public final class YamlPluginDataStore implements PluginDataStore {
-    private static final int DATA_VERSION = 8;
+    private static final int DATA_VERSION = 9;
 
     private final File file;
     private final Logger logger;
@@ -55,7 +57,8 @@ public final class YamlPluginDataStore implements PluginDataStore {
                 loadMappedEntries(config, "suspiciousCases", RepService.SuspiciousRepCase::fromMap),
                 loadRemovalCooldowns(config),
                 loadAlertPreferences(config),
-                loadIdentities(config)
+                loadIdentities(config),
+                loadAdvancementEvidence(config)
         );
     }
 
@@ -94,6 +97,41 @@ public final class YamlPluginDataStore implements PluginDataStore {
             config.set(path + ".tarnishedAt", state.tarnishedAt());
             config.set(path + ".tarnishSources", state.tarnishSources());
         });
+    }
+
+    private Map<UUID, RepAdvancementEvidence> loadAdvancementEvidence(YamlConfiguration config) {
+        ConfigurationSection section = config.getConfigurationSection("advancementEvidence");
+        if (section == null) {
+            return Map.of();
+        }
+        Map<UUID, RepAdvancementEvidence> result = new LinkedHashMap<>();
+        for (String key : section.getKeys(false)) {
+            try {
+                UUID playerId = UUID.fromString(key);
+                String path = key + ".";
+                Map<RepCategory, Integer> categoryMax = new LinkedHashMap<>();
+                ConfigurationSection categories = section.getConfigurationSection(path + "categoryMax");
+                if (categories != null) {
+                    for (String categoryKey : categories.getKeys(false)) {
+                        try {
+                            RepCategory category = RepCategory.valueOf(categoryKey).migratedCategory();
+                            if (category.isPositive()) {
+                                categoryMax.put(category, Math.max(0, categories.getInt(categoryKey, 0)));
+                            }
+                        } catch (IllegalArgumentException ignored) {
+                        }
+                    }
+                }
+                result.put(playerId, new RepAdvancementEvidence(
+                        section.getBoolean(path + "positiveReceived", false),
+                        section.getInt(path + "maxOverall", 0),
+                        section.getInt(path + "minOverall", 0),
+                        section.getBoolean(path + "recoveredFromSevere", false),
+                        categoryMax));
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        return Map.copyOf(result);
     }
 
     private Map<UUID, Integer> loadScores(YamlConfiguration config) {
@@ -232,7 +270,23 @@ public final class YamlPluginDataStore implements PluginDataStore {
         config.set("removalCooldowns", serializeRemovalCooldowns(snapshot.removalCooldowns()));
         writeAlertPreferences(config, snapshot.repTradingAlertPreferences());
         writeStalkEntries(config, snapshot.stalkEntries());
+        writeAdvancementEvidence(config, snapshot.advancementEvidence());
         return saveConfiguration(config);
+    }
+
+    private void writeAdvancementEvidence(
+            YamlConfiguration config,
+            Map<UUID, RepAdvancementEvidence> evidenceByPlayer
+    ) {
+        evidenceByPlayer.forEach((playerId, evidence) -> {
+            String path = "advancementEvidence." + playerId;
+            config.set(path + ".positiveReceived", evidence.positiveReceived());
+            config.set(path + ".maxOverall", evidence.maxOverall());
+            config.set(path + ".minOverall", evidence.minOverall());
+            config.set(path + ".recoveredFromSevere", evidence.recoveredFromSevere());
+            evidence.maxPositiveCategoryScores().forEach((category, value) ->
+                    config.set(path + ".categoryMax." + category.name(), value));
+        });
     }
 
     private void writeScores(YamlConfiguration config, Map<UUID, Integer> scores) {

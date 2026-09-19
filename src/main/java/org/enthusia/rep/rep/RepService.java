@@ -51,6 +51,7 @@ public final class RepService {
     private final Map<UUID, String> knownNames = new ConcurrentHashMap<>();
     private final Map<UUID, List<Commendation>> commendationsByTarget = new ConcurrentHashMap<>();
     private final Map<UUID, Map<UUID, Commendation>> commendationsByGiver = new ConcurrentHashMap<>();
+    private final Map<UUID, RepAdvancementEvidence> advancementEvidence = new ConcurrentHashMap<>();
     private final Map<RepPair, Long> removalCooldowns = new ConcurrentHashMap<>();
     private final Map<String, List<AltRepRecord>> altRecordsByHash = new ConcurrentHashMap<>();
     private final List<SuspiciousRepCase> suspiciousCases = new ArrayList<>();
@@ -113,6 +114,7 @@ public final class RepService {
         for (Commendation commendation : snapshot.commendations()) {
             cacheCommendation(cloneCommendation(commendation), false);
         }
+        loadAdvancementEvidence(snapshot);
 
         synchronized (removedEntries) {
             removedEntries.clear();
@@ -131,6 +133,69 @@ public final class RepService {
             }
         }
         rebuildAntiAbuseIndex();
+    }
+
+    private void loadAdvancementEvidence(PluginDataSnapshot snapshot) {
+        advancementEvidence.clear();
+        advancementEvidence.putAll(snapshot.advancementEvidence());
+
+        Set<UUID> players = new LinkedHashSet<>(scoreByPlayer.keySet());
+        snapshot.commendations().forEach(entry -> players.add(entry.getTarget()));
+        snapshot.removedEntries().forEach(entry -> players.add(entry.commendation().getTarget()));
+        snapshot.reputationChanges().stream()
+                .filter(change -> change.outcome() == org.enthusia.rep.analytics.ReputationChangeOutcome.SUCCEEDED)
+                .sorted(Comparator.comparingLong(org.enthusia.rep.analytics.ReputationChangeRecord::timestamp))
+                .forEach(change -> {
+                    players.add(change.targetId());
+                    updateAdvancementEvidence(change.targetId(),
+                            evidence -> evidence.observeScore(change.oldTotal(), change.newTotal()));
+                });
+
+        for (Commendation commendation : snapshot.commendations()) {
+            if (commendation.isPositive()) {
+                updateAdvancementEvidence(commendation.getTarget(),
+                        RepAdvancementEvidence::observePositiveReceived);
+            }
+        }
+        for (RemovedRep removed : snapshot.removedEntries()) {
+            if (removed.commendation().isPositive()) {
+                updateAdvancementEvidence(removed.commendation().getTarget(),
+                        RepAdvancementEvidence::observePositiveReceived);
+            }
+        }
+
+        for (UUID playerId : players) {
+            int currentScore = getScore(playerId);
+            updateAdvancementEvidence(playerId,
+                    evidence -> evidence.observeScore(0, currentScore)
+                            .observeCategoryScores(getCategoryScores(playerId)));
+        }
+
+        if (!advancementEvidence.equals(snapshot.advancementEvidence())) {
+            dirtyMarker.run();
+        }
+    }
+
+    private void updateAdvancementEvidence(
+            UUID playerId,
+            java.util.function.UnaryOperator<RepAdvancementEvidence> update
+    ) {
+        advancementEvidence.compute(playerId, (id, current) ->
+                update.apply(current == null ? RepAdvancementEvidence.EMPTY : current));
+    }
+
+    public RepAdvancementEvidence getAdvancementEvidence(UUID playerId) {
+        return advancementEvidence.getOrDefault(playerId, RepAdvancementEvidence.EMPTY);
+    }
+
+    private void observeCommendationEvidence(UUID playerId, Commendation commendation) {
+        updateAdvancementEvidence(playerId, evidence -> {
+            RepAdvancementEvidence next = evidence;
+            if (commendation != null && commendation.isPositive()) {
+                next = next.observePositiveReceived();
+            }
+            return next.observeCategoryScores(getCategoryScores(playerId));
+        });
     }
 
     private void rebuildAntiAbuseIndex() {
@@ -189,7 +254,8 @@ public final class RepService {
                 cases,
                 cooldowns,
                 alertPreferences.snapshot(),
-                Map.copyOf(identities)
+                Map.copyOf(identities),
+                Map.copyOf(advancementEvidence)
         );
     }
 
@@ -317,6 +383,8 @@ public final class RepService {
         if (oldScore == newScore) {
             return;
         }
+        updateAdvancementEvidence(playerId,
+                evidence -> evidence.observeScore(oldScore, newScore));
         dirtyMarker.run();
         if (emitEvent) {
             Bukkit.getPluginManager().callEvent(new RepScoreChangedEvent(playerId, oldScore, newScore));
@@ -498,6 +566,7 @@ public final class RepService {
             cacheCommendation(created, true);
             int oldScore = getScore(targetId);
             applyScore(targetId, oldScore + value, true);
+            observeCommendationEvidence(targetId, created);
             recordPlayerChange(targetId, giverId, value, ReputationChangeAction.ADD,
                     normalizedCategory, reasonText, oldScore, oldScore + value);
             removalCooldowns.remove(key(giverId, targetId));
@@ -524,6 +593,7 @@ public final class RepService {
         } else {
             scoreChangeListener.accept(targetId);
         }
+        observeCommendationEvidence(targetId, existing);
         rememberHistoricalVote(existing);
         recordPlayerChange(targetId, giverId, delta, ReputationChangeAction.UPDATE,
                 normalizedCategory, reasonText, oldScore, oldScore + delta);
@@ -787,6 +857,7 @@ public final class RepService {
         int oldScore = getScore(restored.getTarget());
         int delta = restored.getScoreValue();
         applyScore(restored.getTarget(), oldScore + delta, true);
+        observeCommendationEvidence(restored.getTarget(), restored);
         removalCooldowns.remove(key(restored.getGiver(), restored.getTarget()));
         synchronized (removedEntries) {
             removedEntries.remove(removed);

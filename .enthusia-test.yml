@@ -1,0 +1,16 @@
+schema_version: 1
+plugin:
+  id: enthusia-commend
+  name: EnthusiaCommend
+  main_class: org.enthusia.rep.CommendPlugin
+artifact:
+  name: sentinel-plugin
+  jar_path: plugin.jar
+profiles:
+  - dependencies
+configs: []
+databases: []
+dependencies:
+  - id: vault
+    kind: hard
+actions: []

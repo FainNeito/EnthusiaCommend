@@ -33,6 +33,7 @@ public final class YamlPluginDataStore implements PluginDataStore {
 
     private final File file;
     private final Logger logger;
+    private final Object dataLock = new Object();
     private YamlConfiguration evidenceSource;
 
     public YamlPluginDataStore(CommendPlugin plugin) {
@@ -45,7 +46,13 @@ public final class YamlPluginDataStore implements PluginDataStore {
     }
 
     @Override
-    public synchronized PluginDataSnapshot load() {
+    public PluginDataSnapshot load() {
+        synchronized (dataLock) {
+            return loadLocked();
+        }
+    }
+
+    private PluginDataSnapshot loadLocked() {
         if (!file.exists()) {
             evidenceSource = new YamlConfiguration();
             return PluginDataSnapshot.EMPTY;
@@ -277,7 +284,13 @@ public final class YamlPluginDataStore implements PluginDataStore {
     }
 
     @Override
-    public synchronized boolean save(PluginDataSnapshot snapshot) {
+    public boolean save(PluginDataSnapshot snapshot) {
+        synchronized (dataLock) {
+            return saveLocked(snapshot);
+        }
+    }
+
+    private boolean saveLocked(PluginDataSnapshot snapshot) {
         YamlConfiguration config = new YamlConfiguration();
         config.set("dataVersion", DATA_VERSION);
         if (evidenceSource == null) {

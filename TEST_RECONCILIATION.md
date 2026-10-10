@@ -22,3 +22,5 @@ Hosted checks, review, TEST activation, and player acceptance are separate gates
 - [ ] Inspect exact-head hosted checks and review findings.
 - [ ] Activate authorized TEST artifacts and inspect startup.
 - [ ] Obtain Minecraft player/client acceptance where applicable.
+
+Hosted static-analysis findings refined: repeated test literals consolidated; Commend replay split into smaller storage helpers with explicit synchronized blocks. The existing Maven clean verify suite passed again after refinement: {"tests": 255, "failures": 0, "errors": 0, "skipped": 7}. Exact-head hosted checks remain pending.
